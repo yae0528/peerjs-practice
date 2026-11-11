@@ -1,15 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
-import Peer from 'peerjs'
+import Peer, { type DataConnection } from 'peerjs'
 import { QRCodeSVG } from 'qrcode.react'
 
 function Smartphone({ hostId }: { hostId: string }) {
     const videoRef = useRef<HTMLVideoElement>(null)
+    const connRef = useRef<DataConnection | null>(null)
+    const [message, setMessage] = useState('( ͡° ͜ʖ ͡°)')
       useEffect(() => {
     let stream: MediaStream | null = null
     const peer = new Peer()
         function tryCall() {
       if (peer.open && stream) {
         peer.call(hostId, stream)
+        const conn = peer.connect(hostId)
+        conn.on('open', () => {
+          connRef.current = conn
+          conn.send('接続完了!')
+        })
+        conn.on('close', () => {
+          if (connRef.current == conn) {
+            connRef.current = null
+          }
+        })
       }
     }
 
@@ -42,11 +54,19 @@ function Smartphone({ hostId }: { hostId: string }) {
     return () => {
       stream?.getTracks().forEach((track) => track.stop())
       stream = null
+      connRef.current = null
       peer.destroy()
     }
   }, [hostId])
     return (
-    <div className="h-dvh overflow-hidden bg-blue-100 p-4">
+    <div
+      onClick={() => {
+        if (connRef.current && connRef.current.open) {
+          connRef.current.send(message)
+        }
+      }}
+      className="h-dvh overflow-hidden bg-blue-100 p-4"
+    >
       <div className="flex flex-row items-center gap-4">
         <h1 className="mb-4 text-sm font-bold">
           スマホカメラ
@@ -55,6 +75,13 @@ function Smartphone({ hostId }: { hostId: string }) {
           接続先PC：{hostId}
         </p>
       </div>
+      <input
+        type="text"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        className="mb-4 rounded border bg-white p-2"
+        placeholder="送信する文字"
+      />
 
       <video
         ref={videoRef}
@@ -67,7 +94,19 @@ function Smartphone({ hostId }: { hostId: string }) {
   )
 }
 
-function VideoPanel({ stream }: { stream: MediaStream }) {
+function VideoPanel({
+  stream,
+  effects,
+}: {
+  stream: MediaStream
+  effects: {
+    id: number
+    peerId: string
+    text: string
+    x: number
+    y: number
+  }[]
+}) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -86,6 +125,18 @@ function VideoPanel({ stream }: { stream: MediaStream }) {
         muted
         className="w-full rounded bg-black"
       />
+      {effects.map((effect) => (
+        <span
+          key={effect.id}
+          className="pointer-events-none absolute animate-[floatUp_1s_ease-out_forwards] text-xs font-black text-white"
+          style={{
+            left: `${effect.x}%`,
+            bottom: `${effect.y}%`,
+          }}
+        >
+          {effect.text}
+        </span>
+      ))}
     </div>
   )
 }
@@ -95,6 +146,9 @@ function App() {
       const [videos, setVideos] = useState<
     { peerId: string; stream: MediaStream }[]
   >([])
+  const [effects, setEffects] = useState<
+    { id: number; peerId: string; text: string; x: number; y: number }[]
+  >([])
       const smartphoneUrl = `${window.location.origin}${import.meta.env.BASE_URL}?host=${peerId}`
 
 
@@ -103,6 +157,20 @@ function App() {
 
     peer.on('open', (id) => {
       setPeerId(id)
+    })
+    peer.on('connection', (conn) => {
+      conn.on('data', (data) => {
+        setEffects((prev) => [
+          ...prev,
+          {
+            id: Date.now() + Math.random(),
+            peerId: conn.peer,
+            text: String(data),
+            x: 30 + Math.random() * 40,
+            y: 10 + Math.random() * 20,
+          },
+        ])
+      })
     })
         peer.on('call', (call) => {
       call.answer()
@@ -171,6 +239,7 @@ function App() {
           <VideoPanel
             key={video.stream.id}
             stream={video.stream}
+            effects={effects.filter((effect) => effect.peerId === video.peerId)}
           />
         ))}
       </div>
